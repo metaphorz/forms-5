@@ -101,7 +101,9 @@ function cfEffective(rMiles, RmaxMiles, cfBase) {
    rec:   { CP, Rmax(mi), VT(mph), CF, FFP, ... }
    B:     Holland shape parameter (from WSP quantile)
    pts:   grid points array (ordered like grid.json)            */
-function computeLiveWind(model, rec, B, pts, sched) {
+// factory: returns surf(xEast_m, yNorth_m) -> marine surface wind (mph) for one
+// storm, in the storm-relative frame (x=East, y=North). Shared by all callers.
+function fieldFnFor(model, rec, B) {
   const dpPa = (rec.FFP - rec.CP) * 100;
   const RmaxMiles = rec.Rmax;
   const RmaxM = RmaxMiles * PHYS.MILE_M;
@@ -109,39 +111,74 @@ function computeLiveWind(model, rec, B, pts, sched) {
   const cMs = rec.VT * 0.44704;
   const th = PHYS.BEARING * Math.PI / 180;
   const cx = cMs * Math.sin(th), cy = cMs * Math.cos(th);  // due west: (-c, 0)
+  return function (xEast_m, yNorth_m) {
+    const rm = Math.max(Math.hypot(xEast_m, yNorth_m), 1);
+    const rMiles = rm / PHYS.MILE_M;
+    const phi = Math.atan2(yNorth_m, xEast_m);
+    const Vg = model === "willoughby"
+      ? willoughbyV(rm, dpPa, B, RmaxM, f)
+      : hollandVg(rm, dpPa, B, RmaxM, f);
+    const V10 = PHYS.BETA10 * Vg;
+    const tin = inflowAngle(rm, RmaxM);
+    const uRad = -V10 * Math.sin(tin), vTan = V10 * Math.cos(tin);
+    const cp = Math.cos(phi), sp = Math.sin(phi);
+    const Ux = uRad * cp + vTan * (-sp) + cx;
+    const Uy = uRad * sp + vTan * cp + cy;
+    return Math.hypot(Ux, Uy) * cfEffective(rMiles, RmaxMiles, rec.CF) * PHYS.MS_TO_MPH;
+  };
+}
 
+function computeLiveWind(model, rec, B, pts, sched) {
+  const fn = fieldFnFor(model, rec, B);
   const out = new Float32Array(pts.length);
   const nT = Math.round(PHYS.T_MAX / PHYS.T_DT);
   for (let i = 0; i < pts.length; i++) {
     const ew = pts[i].ew, ns = pts[i].ns;
     let peak = 0;
     for (let s = 0; s <= nT; s++) {
-      const t = s * PHYS.T_DT;
-      const ewc = rec.VT * t;
-      const dx = ew - ewc;                 // +west of storm
-      const rMiles = Math.hypot(dx, ns);
-      const rm = Math.max(rMiles * PHYS.MILE_M, 1);
-      const xEast = -dx, yNorth = ns;
-      const phi = Math.atan2(yNorth, xEast);
-
-      const Vg = model === "willoughby"
-        ? willoughbyV(rm, dpPa, B, RmaxM, f)
-        : hollandVg(rm, dpPa, B, RmaxM, f);
-      const V10 = PHYS.BETA10 * Vg;
-      const tin = inflowAngle(rm, RmaxM);
-      const uRad = -V10 * Math.sin(tin);
-      const vTan = V10 * Math.cos(tin);
-      const cp = Math.cos(phi), sp = Math.sin(phi);
-      const Ux = uRad * cp + vTan * (-sp) + cx;
-      const Uy = uRad * sp + vTan * cp + cy;
-      const spd = Math.hypot(Ux, Uy);
-      let surf = spd * cfEffective(rMiles, RmaxMiles, rec.CF) * PHYS.MS_TO_MPH;
+      const ewc = rec.VT * s * PHYS.T_DT;
+      let surf = fn(-(ew - ewc) * PHYS.MILE_M, ns * PHYS.MILE_M);
       if (sched) surf *= sched[s];          // K&D intensity ratio at this time
       if (surf > peak) peak = surf;
     }
     out[i] = peak;
   }
   return out;
+}
+
+// storm-relative marine surface-wind field on an n x n grid over +/- halfKm.
+// Z[row*n + col]; col -> x_east, row -> y_north (both -half..+half km).
+function stormRelativeField(model, rec, B, halfKm = 90, n = 81) {
+  const fn = fieldFnFor(model, rec, B);
+  const Z = new Float32Array(n * n);
+  const step = (2 * halfKm) / (n - 1);
+  for (let r = 0; r < n; r++) {
+    const y_km = -halfKm + r * step;
+    for (let c = 0; c < n; c++) {
+      const x_km = -halfKm + c * step;
+      Z[r * n + c] = fn(x_km * 1000, y_km * 1000);
+    }
+  }
+  return { Z, n, halfKm };
+}
+
+// wind at one grid vertex over the 12-hr passage, with its storm-relative
+// position each step. opts: { sched (K&D s(t)), factor (roughness multiplier) }.
+function pointTimeSeries(model, rec, B, ew, ns, opts = {}) {
+  const fn = fieldFnFor(model, rec, B);
+  const nT = Math.round(PHYS.T_MAX / PHYS.T_DT);
+  const t = [], w = [], rx = [], ry = [];
+  let imax = 0;
+  for (let s = 0; s <= nT; s++) {
+    const tt = s * PHYS.T_DT, ewc = rec.VT * tt;
+    const xE_m = -(ew - ewc) * PHYS.MILE_M, yN_m = ns * PHYS.MILE_M;
+    let surf = fn(xE_m, yN_m);
+    if (opts.sched) surf *= opts.sched[s];
+    if (opts.factor) surf *= opts.factor;
+    t.push(tt); w.push(surf); rx.push(xE_m / 1000); ry.push(yN_m / 1000);
+    if (surf > w[imax]) imax = s;
+  }
+  return { t, w, rx, ry, imax };
 }
 
 // Holland/Willoughby with Kaplan-DeMaria decay: marine pass -> V0 -> decayed pass

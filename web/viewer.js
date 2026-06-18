@@ -5,6 +5,7 @@ const state = {
   inputs: null,
   powell: null,
   powellKd: null,         // Powell Kaplan–DeMaria decayed peaks (after UA run)
+  powellField: null,      // Powell storm-relative isotach fields (after UA run)
   roughness: null,        // per-point marine->land multiplier
   map: null,
   markers: [],            // circleMarker per grid point, in grid.json order
@@ -247,6 +248,16 @@ function setupHover() {
   state.map.on("mouseout", () => {
     if (state.map.hasLayer(state.hoverTip)) state.hoverTip.remove();
   });
+  // left-click the nearest dot -> windfield popup (generous radius)
+  state.map.on("click", e => {
+    const cp = e.containerPoint, pts = state.pixelPts;
+    let best = -1, bd = (HOVER_PX + 4) * (HOVER_PX + 4);
+    for (let i = 0; i < pts.length; i++) {
+      const dx = pts[i].x - cp.x, dy = pts[i].y - cp.y, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best >= 0) openWindfieldPopup(best);
+  });
 }
 
 // ---- recolor + popups ----------------------------------------------------
@@ -343,6 +354,8 @@ async function init() {
     catch (e) { state.roughness = null; }
     try { state.powellKd = await (await fetch("../outputs/web/powell_kd.json")).json(); }
     catch (e) { state.powellKd = null; }   // generated after the UA run
+    try { state.powellField = await (await fetch("../outputs/web/powell_field.json")).json(); }
+    catch (e) { state.powellField = null; }  // generated after the UA run
     buildMap();
     setupHover();
     setupAnalysis();

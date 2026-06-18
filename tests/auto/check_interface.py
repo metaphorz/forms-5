@@ -160,10 +160,25 @@ try:
     print(f"drag delta (px) = {moved} (expect ~100,100)")
     drv.save_screenshot(os.path.join(HERE, "analysis_check.png"))
 
+    # windfield popup (Holland live): click a land vertex near the track
+    drv.execute_script("document.getElementById('model').value='holland';"
+                       "document.getElementById('model').dispatchEvent(new Event('change'));")
+    time.sleep(0.4)
+    idx = drv.execute_script(
+        "return state.grid.points.findIndex(p=>p.land && p.ns===0 && p.ew===30);")
+    drv.execute_script("openWindfieldPopup(arguments[0]);", idx)
+    time.sleep(1.0)
+    wf_svgs = drv.execute_script("return document.querySelectorAll('.wf-panel svg').length;")
+    wf_paths = drv.execute_script(
+        "return document.querySelectorAll('.wf-panel svg path').length;")
+    print(f"=== WINDFIELD POPUP: svgs={wf_svgs} (expect 2), isotach paths={wf_paths} ===")
+    drv.save_screenshot(os.path.join(HERE, "popup_check.png"))
+
     print("=== CONSOLE LOGS ===")
     errors = 0
     for entry in drv.get_log("browser"):
-        if "favicon.ico" in entry["message"] or "powell_kd.json" in entry["message"]:
+        if any(s in entry["message"] for s in
+               ("favicon.ico", "powell_kd.json", "powell_field.json")):
             continue  # harmless / not built until after the UA run
         print(f"[{entry['level']}] {entry['message']}")
         if entry["level"] == "SEVERE":
