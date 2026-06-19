@@ -7,6 +7,7 @@ const state = {
   powellKd: null,         // Powell Kaplan–DeMaria decayed peaks (after UA run)
   powellField: null,      // Powell storm-relative isotach fields (after UA run)
   powellUa: null,         // Powell UA-sheet outputs for faithful EPR
+  vuln: null,             // vulnerability curve {xs, mdr} (MDR vs 3-sec gust)
   roughness: null,        // per-point marine->land multiplier
   map: null,
   markers: [],            // circleMarker per grid point, in grid.json order
@@ -95,8 +96,46 @@ function windColor(mph) {
   return c;
 }
 
+// ---- loss (vulnerability curve) ------------------------------------------
+const EXPOSURE_VALUE = 100000;   // $ per land vertex (ROA p.186)
+const GUST_FACTOR = 1.0;         // peak surface wind -> 3-sec gust input (adjustable)
+
+// MDR at a wind speed, linear-interpolated from the vulnerability curve
+function mdrAt(windMph) {
+  const v = state.vuln;
+  if (!v) return null;
+  const g = windMph * GUST_FACTOR, xs = v.xs, m = v.mdr;
+  if (g <= xs[0]) return m[0];
+  if (g >= xs[xs.length - 1]) return m[m.length - 1];
+  let lo = 0, hi = xs.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= g) lo = mid; else hi = mid; }
+  const t = (g - xs[lo]) / (xs[hi] - xs[lo]);
+  return m[lo] + t * (m[hi] - m[lo]);
+}
+function lossDollars(windMph) {
+  const mdr = mdrAt(windMph);
+  return mdr == null ? null : mdr * EXPOSURE_VALUE;
+}
+
+// loss color scale (MDR 0..0.6+), greys->reds
+const LOSS_STOPS = [
+  [0, "#3b4a5a"], [0.02, "#fee5d9"], [0.05, "#fcae91"], [0.10, "#fb6a4a"],
+  [0.20, "#de2d26"], [0.35, "#a50f15"], [0.50, "#67000d"],
+];
+function lossColor(mdr) {
+  if (mdr == null || isNaN(mdr)) return "#2b2f36";
+  let c = LOSS_STOPS[0][1];
+  for (const [thr, col] of LOSS_STOPS) { if (mdr >= thr) c = col; else break; }
+  return c;
+}
+
 function renderLegend(mode) {
   const el = document.getElementById("legend");
+  if (mode === "loss") {
+    el.innerHTML = LOSS_STOPS.map(([thr, col]) =>
+      `<div class="lg"><span style="background:${col}"></span>&ge; ${(thr * 100).toFixed(0)}% MDR</div>`).join("");
+    return;
+  }
   if (mode === "landwater") {
     el.innerHTML = `<div class="lg"><span style="background:#6b7785"></span>Land</div>` +
                    `<div class="lg"><span style="background:#2b6cb0"></span>Water</div>`;
@@ -212,7 +251,15 @@ function pointInfoHTML(i) {
   const colorBy = document.getElementById("colorBy").value;
   const { rec } = currentSelection();
   const w = state.wind ? state.wind[i] : null;
-  const wtxt = (colorBy === "wind" && w != null) ? `<b>${w.toFixed(1)} mph</b><br>` : "";
+  let wtxt = "";
+  if (w != null) {
+    wtxt = `<b>${w.toFixed(1)} mph</b>`;
+    if (state.vuln && state.grid.points[i].land) {
+      const mdr = mdrAt(w);
+      wtxt += ` &middot; loss <b>${(mdr * 100).toFixed(1)}%</b> ($${Math.round(mdr * EXPOSURE_VALUE).toLocaleString()})`;
+    }
+    wtxt += "<br>";
+  }
   const params = rec
     ? `<hr>CP ${rec.CP} mb &middot; Rmax ${rec.Rmax} mi<br>` +
       `VT ${rec.VT} mph &middot; FFP ${rec.FFP} mb<br>` +
@@ -268,7 +315,8 @@ function updateField() {
   const { model, rec } = currentSelection();
   renderLegend(colorBy);
 
-  let wind = colorBy === "wind" ? computeWind() : null;
+  const needWind = colorBy === "wind" || colorBy === "loss";
+  let wind = needWind ? computeWind() : null;
   const kdPending = wind === "kd-pending";
   if (kdPending) wind = null;
   state.wind = wind;
@@ -276,16 +324,23 @@ function updateField() {
   const showWater = document.getElementById("showWater").checked;
   const showGrid = document.getElementById("showGrid").checked;
   const display = document.getElementById("display").value;
-  const contourMode = display === "contour" && colorBy === "wind" && !!wind;
+  const lossMode = colorBy === "loss";
+  const contourMode = display === "contour" && needWind && !!wind;
 
-  // refresh contour overlay
+  // refresh contour overlay (wind bands, or loss-MDR bands)
   if (state.contour) { state.map.removeLayer(state.contour); state.contour = null; }
   if (contourMode) {
-    const thresholds = WIND_STOPS.map(s => s[0]).filter(t => t > 0);
-    state.contour = buildContourLayer(g, wind, thresholds, windColor).addTo(state.map);
+    if (lossMode && state.vuln) {
+      const mdrField = Array.from(wind, w => mdrAt(w));
+      const thr = LOSS_STOPS.map(s => s[0]).filter(t => t > 0);
+      state.contour = buildContourLayer(g, mdrField, thr, lossColor).addTo(state.map);
+    } else {
+      const thr = WIND_STOPS.map(s => s[0]).filter(t => t > 0);
+      state.contour = buildContourLayer(g, wind, thr, windColor).addTo(state.map);
+    }
   }
 
-  let wmax = 0, wsum = 0, n = 0;
+  let wmax = 0, wsum = 0, n = 0, lossTotal = 0;
   g.points.forEach((p, i) => {
     const m = state.markers[i];
     const visible = !contourMode && showGrid && (p.land || showWater);
@@ -293,10 +348,14 @@ function updateField() {
     if (!visible) { m.closeTooltip && m.unbindTooltip(); return; }
 
     let fill;
+    const w = wind ? wind[i] : null;
     if (colorBy === "landwater") {
       fill = p.land ? "#6b7785" : "#2b6cb0";
+    } else if (lossMode) {
+      const mdr = w != null ? mdrAt(w) : null;
+      fill = p.land ? lossColor(mdr) : "#243244";   // loss only meaningful on land
+      if (mdr != null && p.land) { lossTotal += mdr * EXPOSURE_VALUE; if (w > wmax) wmax = w; n++; }
     } else {
-      const w = wind ? wind[i] : null;
       fill = windColor(w);
       if (w != null) { if (w > wmax) wmax = w; if (p.land) { wsum += w; n++; } }
     }
@@ -304,11 +363,18 @@ function updateField() {
   });
 
   const info = document.getElementById("info");
-  if (colorBy === "wind" && wind) {
-    info.innerHTML =
-      `${model.charAt(0).toUpperCase() + model.slice(1)} &middot; ` +
-      `${currentSelection().cat.toUpperCase()} v${document.getElementById("vector").value}<br>` +
-      `Peak wind <b>${wmax.toFixed(1)} mph</b> &middot; ` +
+  const tag = `${model.charAt(0).toUpperCase() + model.slice(1)} · ` +
+              `${currentSelection().cat.toUpperCase()} v${document.getElementById("vector").value}`;
+  if (lossMode && wind && state.vuln) {
+    const pct = lossTotal / (state.grid.n_land * EXPOSURE_VALUE) * 100;
+    info.innerHTML = `${tag}<br>Loss over ${n} land pts <b>$${(lossTotal / 1e6).toFixed(2)}M</b>` +
+      `<br>= <b>${pct.toFixed(2)}%</b> of $${(state.grid.n_land * EXPOSURE_VALUE / 1e6).toFixed(1)}M exposure`;
+  } else if (lossMode && kdPending) {
+    info.textContent = "Powell Kaplan–DeMaria field: precompute pending.";
+  } else if (lossMode) {
+    info.textContent = "Vulnerability curve not loaded…";
+  } else if (colorBy === "wind" && wind) {
+    info.innerHTML = `${tag}<br>Peak wind <b>${wmax.toFixed(1)} mph</b> · ` +
       `land mean ${n ? (wsum / n).toFixed(1) : "–"} mph`;
   } else if (colorBy === "wind" && kdPending) {
     info.textContent = "Powell Kaplan–DeMaria field: exact precompute scheduled after the UA run.";
@@ -359,6 +425,8 @@ async function init() {
     catch (e) { state.powellField = null; }  // generated after the UA run
     try { state.powellUa = await (await fetch("../outputs/web/powell_ua.json")).json(); }
     catch (e) { state.powellUa = null; }     // faithful EPR (Option 1)
+    try { state.vuln = await (await fetch("../outputs/web/vulnerability.json")).json(); }
+    catch (e) { state.vuln = null; }         // MDR vs wind (loss)
     buildMap();
     setupHover();
     setupAnalysis();
