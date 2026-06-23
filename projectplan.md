@@ -137,5 +137,26 @@ Standard S-3 / Form S-6 in the ROA.
 ## Open questions for later
 - (ERA5 4th-option resolved — retired; see Phase 4.)
 
+## Mean / CSV buttons (2026-06-23) — DONE
+Two buttons below the Input-vector slider.
+
+Decisions confirmed with user:
+- **CSV scope:** all 3 categories (300 rows + header). `Category` column is the bare
+  number (1/3/5), per follow-up request.
+- **Mean mode:** persistent toggle that overrides the slider (slider greyed while active);
+  mean is over all 100 input vectors.
+
+Done:
+- [x] `index.html`: `<div class="vec-actions">` with `#btnMean` + `#btnCsv` under the slider.
+- [x] `style.css`: `.vec-actions` / `.vec-btn` (+ `.active` green) styles; greyed disabled slider.
+- [x] `viewer.js`: `state.meanMode`; `computeMeanWind(model,cat)` averages per-point wind
+      over all 100 vectors (respects current model/category/land-effect/B); `computeWind()`
+      returns the mean field when `meanMode`.
+- [x] `viewer.js`: wired `#btnMean` (toggle, disable slider, deferred "Computing…" status)
+      and `#btnCsv` (`downloadInputsCsv()` builds CP,Rmax,VT,WSP,CF,FFP for all 3 cats).
+- [x] `viewer.js`: `pointInfoHTML` + info `tag` read "mean (100 vectors)" in mean mode.
+- [x] Selenium test `tests/auto/test_mean_csv_buttons.py` — Powell + Holland mean, toggle,
+      slider-disable, and 300-row CSV download. **ALL CHECKS PASSED.**
+
 ## Review
 _(to be filled in as work proceeds)_

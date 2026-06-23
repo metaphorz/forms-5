@@ -10,6 +10,7 @@ data/nlcd_grid.tif
 tests/auto/*.png
 tests/auto/server.log
 tests/auto/server.pid
+tests/auto/downloads/
 
 # OS / LaTeX build cruft
 .DS_Store

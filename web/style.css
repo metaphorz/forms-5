@@ -44,6 +44,14 @@ body.theme-light #legend .lg { color: #2a3744; }
   background: #2563eb; color: #fff; border: none; border-radius: 5px; font-size: 13px; }
 .analysis-btn:hover { background: #1d4ed8; }
 
+/* Mean / CSV buttons under the input-vector slider */
+.vec-actions { display: flex; gap: 6px; margin-top: 6px; }
+.vec-btn { flex: 1; padding: 6px; cursor: pointer; background: #2563eb; color: #fff;
+  border: none; border-radius: 5px; font-size: 13px; }
+.vec-btn:hover { background: #1d4ed8; }
+.vec-btn.active { background: #059669; }
+#vector:disabled { opacity: .4; }
+
 /* analysis chart panels (draggable + resizable floating windows) */
 .analysis-panel { display: none; position: absolute; z-index: 1000;
   width: 470px; height: 360px; min-width: 300px; min-height: 220px;

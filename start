@@ -9,3 +9,4 @@ echo "Stop with ./stop"
 echo $! > tests/auto/server.pid
 sleep 1
 echo "PID $(cat tests/auto/server.pid)"
+open "http://localhost:${PORT}/web/index.html"

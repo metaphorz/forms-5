@@ -16,6 +16,7 @@ const state = {
   tiles: null,            // basemap tile layer (swapped on theme change)
   hoverTip: null,         // free-floating tooltip for nearest-point hover
   pixelPts: null,         // cached container-pixel coords of grid points
+  meanMode: false,        // true -> show per-point mean wind over all 100 vectors
   layers: { track: null, landfall: null },
 };
 
@@ -189,7 +190,48 @@ function computeWindFor(model, cat, vIdx) {
 
 function computeWind() {
   const { model, cat, vIdx } = currentSelection();
+  if (state.meanMode) return computeMeanWind(model, cat);
   return computeWindFor(model, cat, vIdx);
+}
+
+// per-point mean peak wind (mph) averaged over all 100 input vectors,
+// respecting the current model/category/land-effect/B selection.
+// Propagates null / "kd-pending" if no vector field is available yet.
+function computeMeanWind(model, cat) {
+  const recs = state.inputs ? state.inputs[cat] : null;
+  if (!recs) return null;
+  let sum = null, count = 0, first = null;
+  for (let v = 0; v < recs.length; v++) {
+    const w = computeWindFor(model, cat, v);
+    if (first === null) first = w;
+    if (!w || typeof w === "string") continue;   // null or "kd-pending"
+    if (!sum) sum = new Float64Array(w.length);
+    for (let i = 0; i < w.length; i++) sum[i] += w[i];
+    count++;
+  }
+  if (!sum) return first;                          // nothing computable yet
+  const out = new Float32Array(sum.length);
+  for (let i = 0; i < out.length; i++) out[i] = sum[i] / count;
+  return out;
+}
+
+// CSV of the 6 Form S-6 input variables for all 100 vectors x 3 categories
+function downloadInputsCsv() {
+  if (!state.inputs) return;
+  const cols = ["CP", "Rmax", "VT", "WSP", "CF", "FFP"];
+  const rows = [["Category", "Vector", ...cols].join(",")];
+  ["cat1", "cat3", "cat5"].forEach(cat => {
+    const label = cat.slice(3);                // "1" | "3" | "5"
+    (state.inputs[cat] || []).forEach(r => {
+      rows.push([label, r.vector, ...cols.map(c => r[c])].join(","));
+    });
+  });
+  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "formS6_inputs.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // mean peak wind over land vertices — the SA/UA output metric
@@ -263,18 +305,20 @@ function pointInfoHTML(i) {
   const w = state.wind ? state.wind[i] : null;
   let wtxt = "";
   if (w != null) {
-    wtxt = `<b>${w.toFixed(1)} mph</b>`;
+    wtxt = `<b>${w.toFixed(1)} mph</b>${state.meanMode ? " (mean of 100)" : ""}`;
     if (state.vuln && state.grid.points[i].land) {
       const mdr = mdrAt(w);
       wtxt += ` &middot; loss <b>${(mdr * 100).toFixed(1)}%</b> ($${Math.round(mdr * EXPOSURE_VALUE).toLocaleString()})`;
     }
     wtxt += "<br>";
   }
-  const params = rec
-    ? `<hr>CP ${rec.CP} mb &middot; Rmax ${rec.Rmax} mi<br>` +
-      `VT ${rec.VT} mph &middot; FFP ${rec.FFP} mb<br>` +
-      `CF ${rec.CF} &middot; WSP ${rec.WSP} (B=${quantileToB(rec.WSP).toFixed(2)})`
-    : "";
+  const params = state.meanMode
+    ? `<hr>mean over all 100 input vectors`
+    : (rec
+      ? `<hr>CP ${rec.CP} mb &middot; Rmax ${rec.Rmax} mi<br>` +
+        `VT ${rec.VT} mph &middot; FFP ${rec.FFP} mb<br>` +
+        `CF ${rec.CF} &middot; WSP ${rec.WSP} (B=${quantileToB(rec.WSP).toFixed(2)})`
+      : "");
   return `${wtxt}(${p.ew}, ${p.ns}) mi<br>${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}<br>` +
          `${p.land ? "land" : "water"}${p.place ? " &middot; " + p.place : ""}${params}`;
 }
@@ -379,7 +423,8 @@ function updateField() {
 
   const info = document.getElementById("info");
   const tag = `${model.charAt(0).toUpperCase() + model.slice(1)} · ` +
-              `${currentSelection().cat.toUpperCase()} v${document.getElementById("vector").value}`;
+              `${currentSelection().cat.toUpperCase()} ` +
+              `${state.meanMode ? "mean (100 vectors)" : "v" + document.getElementById("vector").value}`;
   if (lossMode && wind && state.vuln) {
     const pct = lossTotal / (state.grid.n_land * EXPOSURE_VALUE) * 100;
     info.innerHTML = `${tag}<br>Loss over ${n} land pts <b>$${(lossTotal / 1e6).toFixed(2)}M</b>` +
@@ -413,6 +458,20 @@ function wireControls() {
     document.getElementById("vectorLabel").textContent = vec.value;
     updateField();
   });
+
+  document.getElementById("btnMean").addEventListener("click", () => {
+    state.meanMode = !state.meanMode;
+    document.getElementById("btnMean").classList.toggle("active", state.meanMode);
+    vec.disabled = state.meanMode;
+    if (state.meanMode) {
+      // defer so the "Computing…" status repaints before the (live-model) averaging
+      document.getElementById("info").textContent = "Computing mean over 100 vectors…";
+      setTimeout(updateField, 20);
+    } else {
+      updateField();
+    }
+  });
+  document.getElementById("btnCsv").addEventListener("click", downloadInputsCsv);
 
   document.getElementById("showWater").addEventListener("change", updateField);
   document.getElementById("showGrid").addEventListener("change", updateField);
