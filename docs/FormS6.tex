@@ -180,15 +180,16 @@ a $\tfrac12$\,in.\ plywood deck (8d nails at 6\,in.\ edge / 12\,in.\ field), bui
 vulnerability curve} applies at all points and only the wind varies.
 
 The curve is generated from our existing HAZUS/ARA wind-vulnerability tool
-(\texttt{wind\_\allowbreak vulnerability\_\allowbreak tool\_\allowbreak v5.html})
-driven headlessly to the structure
+(\texttt{wind\_\allowbreak vulnerability\_\allowbreak tool\_\allowbreak v5.html}),
+a damage-state fragility model following the HAZUS hurricane methodology
+\cite{hazus,vickery2006}, driven headlessly to the structure
 above, yielding Mean Damage Ratio (MDR) versus the ASCE~7-98 3-second peak gust at
 10\,m (Exposure~C). The resulting masonry curve (Figure~\ref{fig:vuln}) is a smooth
 sigmoid: $\sim$0 below 50\,mph, 50\% near 100\,mph, and a plateau at MDR~$\approx
 0.60$ above $\sim$140\,mph---the masonry ceiling (walls survive; roof, openings,
 and contents bound the loss), in contrast to frame construction which approaches
 1.0. In the sidebar this curve is identified by a \textbf{Damage model} selector
-(\emph{Vickery--ARA (HAZUS)}), placed directly under the wind-field selector so
+(\emph{Vickery--ARA (HAZUS)}\cite{hazus,vickery2006}), placed directly under the wind-field selector so
 that alternative vulnerability models can be added alongside it as the framework
 grows.
 
@@ -561,6 +562,14 @@ wind observations. \emph{Weather and Forecasting}, 11, 304--328.
 \bibitem{vickery} Vickery, P.~J., Wadhera, D., Powell, M.~D., and Chen, Y. (2009).
 A hurricane boundary layer and wind field model for use in engineering applications.
 \emph{Journal of Applied Meteorology and Climatology}, 48, 381--405.
+
+\bibitem{hazus} Federal Emergency Management Agency (2025). \emph{Hazus 7.0
+Hurricane Model Technical Manual}. FEMA. (Wind vulnerability methodology developed
+by Applied Research Associates.)
+
+\bibitem{vickery2006} Vickery, P.~J., Lin, J., Skerlj, P.~F., Twisdale, L.~A.,
+and Huang, K. (2006). HAZUS-MH hurricane model methodology. II: Damage and loss
+estimation. \emph{Natural Hazards Review}, 7(2), 94--103.
 
 \bibitem{kaplan} Kaplan, J., and DeMaria, M. (1995). A simple empirical model for
 predicting the decay of tropical cyclone winds after landfall.
